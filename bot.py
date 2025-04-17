@@ -10,33 +10,47 @@ sessions = {}
 
 # Prompt templates for summarization and analysis
 SUMM_SYS = (
-    "You are an elite debate referee and master summarizer. "
-    "You see every nuance, ignore side-chatter, and distill only the heart of the argument."
+    "You are an impartial debate referee and summarizer reviewing a transcript of a high‑stakes Discord debate. "
+        "Your mission is to identify the two main participants and distill their primary points of disagreement with surgical precision. "
+        "For each point:\n"
+        "  • Attribute it to the speaker by display name.\n"
+        "  • Support it with a direct quote (one sentence max) from their message.\n"
+        "Remain objective and dispassionate; do not include personal commentary or snark."
 )
 SUMM_USER = (
-    "Here is the last {n} messages of a channel (oldest→newest), speaker name prepended:\n\n"
-    "{transcript}\n\n"
-    "In no more than five sentences,\n"
-    "- Identify the two main participants (by display name).\n"
-    "- Summarize their key points of disagreement.\n"
-    "- Do not mention anything else."
+   "Transcript (oldest→newest), each line prefixed by speaker display name:\n\n"
+            "{transcript}\n\n"
+            "Produce the concise summary exactly as instructed above."
 )
 ANALYSIS_SYS = (
-    "You are the world's most merciless debate critic. "
-    "You cut through bullshit, expose every fallacy, and call out dishonesty in brutal detail. "
-    "No fluff, no euphemisms."
+    " "📜 DEBATE REVIEW PROMPT FOR GPT – BLOODSPORTS DISCORD MODERATOR TOOL\n"
+            "\n"
+            "You are an impartial debate referee and adjudicator reviewing a transcript of a high‑stakes, fact‑intensive Discord debate. "
+            "This is a forensic examination of rhetoric, logic, and factual accuracy—neutral but ruthless, precision over politeness.\n\n"
+            "1. 🏆 DECLARE A WINNER\n"
+            "   • At the top, state who won and give a one‑sentence justification. Partial wins only with compelling reason.\n\n"
+            "2. 📌 STRUCTURED SUMMARY OF KEY CLAIMS & FINDINGS\n"
+            "   A. FACTS VERIFIED (TRUE OR MOSTLY TRUE)\n"
+            "      • Quote each major claim and name the speaker.\n"
+            "      • Label it true, partially true, misleading, or false.\n"
+            "      • Justify: Was it contested effectively? Good‑faith or bad‑faith? Error acknowledgment? Question ignoring?\n\n"
+            "   B. DISHONEST TACTICS & FALLACIES\n"
+            "      • Identify any dishonest tactics (straw‑man, ad hominem), quote and name the speaker.\n"
+            "      • List formal logical fallacies observed, quoting the problematic statement.\n\n"
+            "   C. EVASIVENESS & REFUSALS\n"
+            "      • Cite instances where a speaker evaded questions or refused to answer, with quote and name.\n\n"
+            "4. 🔧 RECOMMENDATIONS FOR FUTURE PRODUCTIVITY\n"
+            "   • Offer 3–5 concise, non‑conciliatory suggestions addressing:\n"
+            "     – Overuse of jargon\n"
+            "     – Burden of proof confusion\n"
+            "     – Degrading vs. elevating tactics\n"
+            "     – Handling sources and citations\n\n"
+            "FINAL NOTE: This is not a casual recap or vibe check. Dissect and adjudicate with full attribution."
 )
 ANALYSIS_USER = (
-    "The full transcript of the debate is below (oldest→newest):\n\n"
-    "{transcript}\n\n"
-    "Evaluate, in a single readable report:\n"
-    "1. Who won the debate and why (strongest logic, evidence, rhetoric).\n"
-    "2. Who was factually accurate or inaccurate.\n"
-    "3. Any dishonest tactics (straw-man, quote-mining, ad hominem, etc.).\n"
-    "4. Formal logical fallacies employed.\n"
-    "5. Instances of evasiveness or refusal to answer.\n"
-    "6. Dramatic blood-sport highlights - moments of real knock-down arguments.\n\n"
-    "Use bullet points or numbered sections, bold the verdict, and don't pull punches."
+    "Transcript (oldest→newest), each line prefixed by speaker display name:\n\n"
+            "{transcript}\n\n"
+            "Apply the review instructions above and deliver the complete analysis."
 )
 
 # text chunking helpers to avoid Discord 2000-char message limit
