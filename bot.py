@@ -95,11 +95,26 @@ async def on_message(message):
     content = message.content.lower().strip()
     session_key = (message.channel.id, message.author.id)
 
-    # Step 1: Trigger audit session
+    # Step 1: Trigger audit session via reply
     if client.user in message.mentions and "audit please" in content:
-        # Fetch last 150 messages (exclude bots)
+        # Must be a reply to specify the debate start
+        ref = message.reference
+        if not ref or not ref.message_id:
+            await message.channel.send(
+                "Please reply to the last message of the debate you want audited and include 'audit please'."
+            )
+            return
+        # Fetch the referenced message
+        try:
+            start_msg = await message.channel.fetch_message(ref.message_id)
+        except Exception:
+            await message.channel.send(
+                "Could not fetch the referenced message. Please try again."
+            )
+            return
+        # Fetch the 100 messages preceding that message (exclude bots)
         msgs = []
-        async for m in message.channel.history(limit=150):
+        async for m in message.channel.history(limit=100, before=start_msg):
             if not m.author.bot:
                 msgs.append(m)
         msgs.reverse()
@@ -116,7 +131,7 @@ async def on_message(message):
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": SUMM_SYS},
-                    {"role": "user",   "content": SUMM_USER.format(n=150, transcript=transcript)},
+                    {"role": "user",   "content": SUMM_USER.format(transcript=transcript)},
                 ],
                 max_tokens=200,
             )
@@ -125,10 +140,23 @@ async def on_message(message):
             return
         summary = summ.choices[0].message.content.strip()
 
-        # Store session state
-        sessions[session_key] = {"state": "awaiting_confirmation", "transcript": transcript, "bad_count": 0}
-        await message.channel.send(
-            f"Confirm this is the debate you want to audit:\n\n{summary}\n\nPlease reply Good or Bad."
+        # Create a private thread for this audit
+        thread = await message.create_thread(
+            name=f"Audit Thread - {start_msg.author.display_name}",
+            auto_archive_duration=1440
+        )
+        # Store session state under the thread channel
+        sessions[(thread.id, message.author.id)] = {
+            "state": "awaiting_confirmation",
+            "transcript": transcript,
+            "bad_count": 0,
+            "start_message_id": start_msg.id,
+        }
+        # Send the brief summary and prompt for full analysis
+        await thread.send(
+            f"Here is a brief summary of the key points and disagreements:\n\n{summary}\n\n"
+            "Would you like a full analysis of who is winning and who is losing? "
+            "Please reply 'Good' or 'Bad' in this thread."
         )
         return
 
@@ -158,11 +186,23 @@ async def on_message(message):
             # First bad: expand to 300 messages and re-summarize
             bad_count = sessions[session_key].get("bad_count", 0)
             if bad_count == 0:
-                # Fetch last 300 messages
+                # Expand to 300 messages before the original start point
+                start_id = sessions[session_key].get("start_message_id")
+                start_msg = None
+                if start_id:
+                    try:
+                        start_msg = await message.channel.fetch_message(start_id)
+                    except Exception:
+                        start_msg = None
                 msgs = []
-                async for m in message.channel.history(limit=300):
-                    if not m.author.bot:
-                        msgs.append(m)
+                if start_msg:
+                    async for m in message.channel.history(limit=300, before=start_msg):
+                        if not m.author.bot:
+                            msgs.append(m)
+                else:
+                    async for m in message.channel.history(limit=300):
+                        if not m.author.bot:
+                            msgs.append(m)
                 msgs.reverse()
                 transcript = "\n".join(f"{m.author.display_name}: {m.content}" for m in msgs)
                 # Re-summarize
@@ -171,7 +211,7 @@ async def on_message(message):
                         model="gpt-3.5-turbo",
                         messages=[
                             {"role": "system", "content": SUMM_SYS},
-                            {"role": "user",   "content": SUMM_USER.format(n=300, transcript=transcript)},
+                            {"role": "user",   "content": SUMM_USER.format(transcript=transcript)},
                         ],
                         max_tokens=300,
                     )
@@ -183,9 +223,10 @@ async def on_message(message):
                 # Update session
                 sessions[session_key]["transcript"] = transcript
                 sessions[session_key]["bad_count"] = 1
-                # Ask for confirmation again
                 await message.channel.send(
-                    f"Confirm this is the debate you want to audit:\n\n{summary}\n\nPlease reply Good or Bad."
+                    f"Here is an expanded summary of the key points and disagreements:\n\n{summary}\n\n"
+                    "Would you like a full analysis of who is winning and who is losing? "
+                    "Please reply 'Good' or 'Bad'."
                 )
                 return
             # Second bad: request manual transcript
