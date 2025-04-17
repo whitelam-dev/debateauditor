@@ -39,6 +39,30 @@ ANALYSIS_USER = (
     "Use bullet points or numbered sections, bold the verdict, and don't pull punches."
 )
 
+# text chunking helpers to avoid Discord 2000-char message limit
+def chunk_text(text, limit=2000):
+    if len(text) <= limit:
+        return [text]
+    chunks = []
+    while len(text) > limit:
+        split_pos = text.rfind("\n", 0, limit)
+        if split_pos == -1:
+            split_pos = limit
+        chunks.append(text[:split_pos])
+        text = text[split_pos:]
+        if text.startswith("\n"):
+            text = text[1:]
+    if text:
+        chunks.append(text)
+    return chunks
+
+async def send_long(channel, text, **kwargs):
+    """
+    Send text to a Discord channel in chunks no longer than 2000 characters.
+    """
+    for chunk in chunk_text(text):
+        await channel.send(chunk, **kwargs)
+
 # Configure Discord intents
 intents = discord.Intents.default()
 intents.message_content = True
@@ -113,7 +137,7 @@ async def on_message(message):
                 sessions.pop(session_key, None)
                 return
             verdict = analysis.choices[0].message.content.strip()
-            await message.channel.send(verdict)
+            await send_long(message.channel, verdict)
             sessions.pop(session_key, None)
             return
         elif content == "bad":
@@ -199,7 +223,7 @@ async def on_message(message):
                 sessions.pop(session_key, None)
                 return
             verdict = analysis.choices[0].message.content.strip()
-            await message.channel.send(verdict)
+            await send_long(message.channel, verdict)
             sessions.pop(session_key, None)
         return
 
