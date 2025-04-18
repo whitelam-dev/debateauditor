@@ -64,6 +64,14 @@ ANALYSIS_USER = (
             "{transcript}\n\n"
             "Apply the review instructions above and deliver the complete analysis."
 )
+# Prompt template to detect if a transcript is actually a debate
+ASSESS_SYS = (
+    "You are an impartial debate moderator. Given a transcript, determine if it represents a true debate"
+    " where two main participants present conflicting arguments. Reply with 'YES' or 'NO' only."
+)
+ASSESS_USER = (
+    "Transcript (oldest→newest):\n\n{transcript}"
+)
 
 # text chunking helpers to avoid Discord 2000-char message limit
 def chunk_text(text, limit=2000):
@@ -115,8 +123,10 @@ async def on_message(message):
             return
         if WaveSink is None:
             await message.channel.send(
-                "Voice recording is not supported. Please install a discord.py build with voice receive support."
-            )
+                "⚠️ Voice receive support not available.\n"
+                "Please install the discord.py voice branch and PyNaCl:"
+                "\n```bash\n"
+                "pip install -U git+https://github.com/Rapptz/discord.py@voice PyNaCl\n```")
             return
         try:
             voice_client = await voice_state.channel.connect()
@@ -217,6 +227,43 @@ async def on_message(message):
             await message.channel.send("ERROR: OPENAI_API_KEY not set.")
             return
 
+        # Preliminary check: is this actually a debate?
+        try:
+            assessment = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": ASSESS_SYS},
+                    {"role": "user",   "content": ASSESS_USER.format(transcript=transcript)},
+                ],
+                max_tokens=5,
+            )
+            answer = assessment.choices[0].message.content.strip().lower()
+        except Exception:
+            answer = "yes"
+        if answer.startswith("n"):
+            # No debate detected: prompt user for intent or broader context
+            try:
+                thread = await message.create_thread(
+                    name=f"Audit Thread - {start_msg.author.display_name}",
+                    auto_archive_duration=1440
+                )
+            except Exception:
+                thread = message.channel
+            sessions[(thread.id, message.author.id)] = {
+                "state": "awaiting_confirmation",
+                "transcript": transcript,
+                "bad_count": 0,
+                "start_message_id": start_msg.id,
+            }
+            await thread.send(
+                "⚠️ I didn't detect an actual debate in those messages.\n\n"
+                "What would you like to do next?\n"
+                "- Reply `ANALYZE` to analyze the current transcript as-is.\n"
+                "- Reply `EXPAND` to fetch more messages for broader context.\n"
+                "If it still isn't a debate after expansion, you can paste a manual transcript."
+            )
+            return
+
         # Summarize the debate
         try:
             summ = openai.ChatCompletion.create(
@@ -247,14 +294,16 @@ async def on_message(message):
         # Send the brief summary and prompt for full analysis
         await thread.send(
             f"Here is a brief summary of the key points and disagreements:\n\n{summary}\n\n"
-            "Would you like a full analysis of who is winning and who is losing? "
-            "Please reply 'Good' or 'Bad' in this thread."
+            "What would you like to do next?\n"
+            "- Reply `ANALYZE` to perform a full debate analysis on this transcript.\n"
+            "- Reply `EXPAND` to fetch more messages (up to 300) for additional context."
         )
         return
 
     # Step 2: Handle confirmation
     if session_key in sessions and sessions[session_key]["state"] == "awaiting_confirmation":
-        if content == "good":
+        # Handle user choice: ANALYZE or EXPAND
+        if content == "analyze":
             # Deep analysis
             transcript = sessions[session_key]["transcript"]
             try:
@@ -274,7 +323,7 @@ async def on_message(message):
             await send_long(message.channel, verdict)
             sessions.pop(session_key, None)
             return
-        elif content == "bad":
+        elif content == "expand":
             # First bad: expand to 300 messages and re-summarize
             bad_count = sessions[session_key].get("bad_count", 0)
             if bad_count == 0:
@@ -317,8 +366,9 @@ async def on_message(message):
                 sessions[session_key]["bad_count"] = 1
                 await message.channel.send(
                     f"Here is an expanded summary of the key points and disagreements:\n\n{summary}\n\n"
-                    "Would you like a full analysis of who is winning and who is losing? "
-                    "Please reply 'Good' or 'Bad'."
+                    "What would you like to do next?\n"
+                    "- Reply `ANALYZE` to perform a full debate analysis on this expanded transcript.\n"
+                    "- Reply `EXPAND` to fetch even more context or paste a manual transcript when prompted."
                 )
                 return
             # Second bad: request manual transcript
