@@ -124,9 +124,13 @@ async def on_message(message):
         if WaveSink is None:
             await message.channel.send(
                 "⚠️ Voice receive support not available.\n"
-                "Please install the discord.py voice branch and PyNaCl:"
-                "\n```bash\n"
-                "pip install -U git+https://github.com/Rapptz/discord.py@voice PyNaCl\n```")
+                "Please install a discord.py build with voice‑receive support and PyNaCl.\n"
+                "You can install directly from the upstream repository:\n"
+                "```bash\n"
+                "pip uninstall -y discord.py\n"
+                "pip install -U git+https://github.com/Rapptz/discord.py PyNaCl\n"
+                "```"
+            )
             return
         try:
             voice_client = await voice_state.channel.connect()

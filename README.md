@@ -16,10 +16,11 @@
      ```bash
      pip install -r requirements.txt
      ```
-   - (Optional) For voice-based live transcription, install the discord.py voice branch and PyNaCl:
-     ```bash
-     pip install -U git+https://github.com/Rapptz/discord.py@voice PyNaCl
-     ```
+   - (Optional) For voice-based live transcription, first remove any existing discord.py and then install the upstream build with voice‑receive support and PyNaCl:
+    ```bash
+    pip uninstall -y discord.py
+    pip install -U git+https://github.com/Rapptz/discord.py PyNaCl
+    ```
    - Run the bot:
      ```bash
      python bot.py
