@@ -16,10 +16,18 @@
      ```bash
      pip install -r requirements.txt
      ```
-   - (Optional) For voice-based live transcription, first remove any existing discord.py and then install the upstream build with voice‑receive support and PyNaCl:
+   - (Optional) For voice-based live transcription, install the upstream GitHub build (which includes audio sinks) and PyNaCl:
     ```bash
-    pip uninstall -y discord.py
-    pip install -U git+https://github.com/Rapptz/discord.py PyNaCl
+    python -m pip uninstall -y discord.py
+    python -m pip install -U git+https://github.com/Rapptz/discord.py PyNaCl
+    ```
+   - Verify the sinks import:
+    ```bash
+    python - << 'EOF'
+    import discord
+    from discord.sinks import WaveSink
+    print('✅ WaveSink available')
+    EOF
     ```
    - Run the bot:
      ```bash
