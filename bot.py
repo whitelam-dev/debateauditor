@@ -2,11 +2,23 @@ import os
 import discord
 import openai
 from dotenv import load_dotenv
+import asyncio
+import io
+import wave
+
+# Optional voice receive support via discord.sinks
+try:
+    from discord.sinks import WaveSink
+except ImportError:
+    WaveSink = None
 
 # Load environment variables from .env file if present
 load_dotenv()
 # In-memory sessions for multi-step audits: keyed by (channel_id, user_id)
 sessions = {}
+ 
+# In-memory live debate voice sessions: keyed by guild_id
+live_sessions = {}
 
 # Prompt templates for summarization and analysis
 SUMM_SYS = (
@@ -94,6 +106,86 @@ async def on_message(message):
 
     content = message.content.lower().strip()
     session_key = (message.channel.id, message.author.id)
+    # Voice debate commands
+    # Command: !startdebate - join voice, begin live transcription and summarization
+    if content.startswith('!startdebate'):
+        voice_state = message.author.voice
+        if not voice_state or not voice_state.channel:
+            await message.channel.send("You must be in a voice channel to start a debate.")
+            return
+        if WaveSink is None:
+            await message.channel.send(
+                "Voice recording is not supported. Please install a discord.py build with voice receive support."
+            )
+            return
+        try:
+            voice_client = await voice_state.channel.connect()
+        except Exception as e:
+            await message.channel.send(f"Error connecting to voice channel: {e}")
+            return
+        notice = await message.channel.send(
+            "Starting live debate. Live notes will appear in the 'DEBATE LIVE NOTES' thread below."
+        )
+        try:
+            thread = await notice.create_thread(
+                name="DEBATE LIVE NOTES", auto_archive_duration=1440
+            )
+        except Exception:
+            thread = message.channel
+            await message.channel.send("Could not create thread; posting live notes in channel.")
+        guild_id = message.guild.id if message.guild else message.channel.id
+        session = {
+            "voice_client": voice_client,
+            "text_channel": message.channel,
+            "thread": thread,
+            "full_transcript": "",
+            "recording": True,
+        }
+        live_sessions[guild_id] = session
+        session["task"] = asyncio.create_task(live_recording(guild_id))
+        await message.channel.send(
+            "Debate live started. Use `!enddebate` to end and analyze the debate."
+        )
+        return
+    # Command: !enddebate - stop live transcription and perform full analysis
+    if content.startswith('!enddebate'):
+        guild_id = message.guild.id if message.guild else message.channel.id
+        session = live_sessions.get(guild_id)
+        if not session:
+            await message.channel.send("No active debate session to end.")
+            return
+        session["recording"] = False
+        try:
+            session["voice_client"].stop_recording()
+        except Exception:
+            pass
+        try:
+            await session["voice_client"].disconnect()
+        except Exception:
+            pass
+        await message.channel.send("Live debate ended. Generating full debate analysis...")
+        transcript = session["full_transcript"].strip()
+        if not transcript:
+            await session["thread"].send("No transcript available for analysis.")
+            live_sessions.pop(guild_id, None)
+            return
+        try:
+            analysis = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": ANALYSIS_SYS},
+                    {"role": "user", "content": ANALYSIS_USER.format(transcript=transcript)},
+                ],
+                max_tokens=500,
+            )
+        except Exception as e:
+            await message.channel.send(f"OpenAI analysis error: {e}")
+            live_sessions.pop(guild_id, None)
+            return
+        verdict = analysis.choices[0].message.content.strip()
+        await send_long(session["thread"], verdict)
+        live_sessions.pop(guild_id, None)
+        return
 
     # Step 1: Trigger audit session via reply
     if client.user in message.mentions and "audit please" in content:
@@ -284,6 +376,71 @@ async def on_message(message):
 
     # No other triggers
     return
+
+# --- Live voice debate recording and summarization ---
+async def live_recording(guild_id):
+    session = live_sessions.get(guild_id)
+    if not session:
+        return
+    voice_client = session["voice_client"]
+    while session.get("recording"):
+        sink = WaveSink()
+        voice_client.start_recording(sink, lambda _sink, _gid: None, guild_id)
+        await asyncio.sleep(180)
+        voice_client.stop_recording()
+        await process_audio_segment(sink, guild_id)
+
+async def process_audio_segment(sink, guild_id):
+    session = live_sessions.get(guild_id)
+    if not session:
+        return
+    thread = session["thread"]
+    # Collect raw audio frames
+    if hasattr(sink, "buffers"):
+        chunks = sink.buffers
+    elif hasattr(sink, "audio_data"):
+        chunks = sink.audio_data
+    else:
+        await thread.send("Unsupported sink; cannot process audio.")
+        return
+    transcripts = []
+    for user_id, frames in chunks.items():
+        if not frames:
+            continue
+        buffer = io.BytesIO()
+        wf = wave.open(buffer, "wb")
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(48000)
+        wf.writeframes(b"".join(frames))
+        wf.close()
+        buffer.seek(0)
+        try:
+            resp = openai.Audio.transcribe("whisper-1", buffer)
+            text = resp.get("text") if isinstance(resp, dict) else getattr(resp, "text", "")
+        except Exception as e:
+            await thread.send(f"Error during transcription for <@{user_id}>: {e}")
+            continue
+        member = session["voice_client"].guild.get_member(user_id)
+        name = member.display_name if member else str(user_id)
+        transcripts.append(f"{name}: {text}")
+    if not transcripts:
+        return
+    session["full_transcript"] += "\n".join(transcripts) + "\n"
+    try:
+        summ = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are an impartial debate referee summarizing a live segment of a debate. Provide a concise summary of the main points made in the following transcript."},
+                {"role": "user", "content": "Transcript:\n" + "\n".join(transcripts)},
+            ],
+            max_tokens=150,
+        )
+        summary = summ.choices[0].message.content.strip()
+    except Exception as e:
+        await thread.send(f"Error during summary: {e}")
+        return
+    await thread.send(f"**Live summary (last 3 minutes):**\n{summary}")
 
 if __name__ == "__main__":
     token = os.getenv("DISCORD_TOKEN")
